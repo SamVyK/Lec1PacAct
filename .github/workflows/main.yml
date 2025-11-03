@@ -5,76 +5,118 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+# Give the workflow permission to push commits
+permissions:
+  contents: write
+
 jobs:
   update-site:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 0: Check out the repo
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # needed for git rev-parse
+          fetch-depth: 0
 
-      # Step 1: Set up git identity for commits (bot user)
-      - name: Configure git
+      - name: Configure git identity
+        shell: bash
         run: |
           git config --global user.name  "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      # Step 2: Determine actor and optional per-actor HTML file
-      # Map usernames -> personal HTML file (edit to match your team)
-      - name: Resolve actor-to-file mapping
-        id: map
+      # Skip making changes when the actor is the bot itself to avoid infinite loops
+      - name: Decide whether to modify files
+        id: should_run
+        shell: bash
         run: |
-          ACTOR="${{ github.actor }}"
-          # >>> EDIT THIS MAP FOR YOUR TEAM <<<
-          declare -A TEAM_MAPPING=(
-            [TeamLeader]="index.html"
-            [SamVyK]="member1.html"
-            [AliceDev]="member2.html"
-          )
-          TARGET_FILE="${TEAM_MAPPING[$ACTOR]}"
-          echo "actor=$ACTOR" >> $GITHUB_OUTPUT
-          echo "target_file=$TARGET_FILE" >> $GITHUB_OUTPUT
-
-      # Step 2a: Append a line to index.html for everyone (lecture requirement)
-      # (This will run for any actor)
-      - name: Update index.html with actor + timestamp
-        run: |
-          date_str="$(date '+%Y-%m-%d %H:%M:%S')"
-          # Insert just before </body> if present; otherwise append
-          if grep -q '</body>' index.html; then
-            sed -i "/<\/body>/i <p>Updated by ${{ steps.map.outputs.actor }} on ${date_str}</p>" index.html
+          if [[ "${GITHUB_ACTOR}" == "github-actions[bot]" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
           else
-            echo "<p>Updated by ${{ steps.map.outputs.actor }} on ${date_str}</p>" >> index.html
+            echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Step 2b: Conditionally update the actor's personal HTML file
+      # Map the actor to a personal HTML file (edit cases to match your team)
+      - name: Resolve actor->file mapping
+        id: map
+        if: steps.should_run.outputs.run == 'true'
+        shell: bash
+        run: |
+          actor="${GITHUB_ACTOR}"
+          target_file=""
+          case "$actor" in
+            TeamLeader) target_file="index.html" ;;
+            SamVyK)     target_file="member1.html" ;;
+            AliceDev)   target_file="member2.html" ;;
+            *)          target_file="" ;;
+          esac
+          echo "actor=$actor" >> "$GITHUB_OUTPUT"
+          echo "target_file=$target_file" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure base files exist
+        if: steps.should_run.outputs.run == 'true'
+        shell: bash
+        run: |
+          # Create index.html if missing (simple skeleton)
+          if [[ ! -f index.html ]]; then
+            cat > index.html <<'HTML'
+<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Lecture 2</title></head>
+  <body><h1>Lecture 2</h1></body>
+</html>
+HTML
+          fi
+          # Create README if missing
+          [[ -f README.md ]] || echo "# Lecture 2 log" > README.md
+
+      - name: Update index.html with actor + timestamp
+        if: steps.should_run.outputs.run == 'true'
+        shell: bash
+        run: |
+          date_str="$(date '+%Y-%m-%d %H:%M:%S')"
+          if grep -q '</body>' index.html; then
+            # Insert before </body>
+            sed -i "/<\/body>/i <p>Updated by ${GITHUB_ACTOR} on ${date_str}</p>" index.html
+          else
+            echo "<p>Updated by ${GITHUB_ACTOR} on ${date_str}</p>" >> index.html
+          fi
+
       - name: Update actor-specific HTML (conditional)
-        if: ${{ steps.map.outputs.target_file != '' && steps.map.outputs.target_file != 'index.html' }}
+        if: steps.should_run.outputs.run == 'true' && steps.map.outputs.target_file != '' && steps.map.outputs.target_file != 'index.html'
+        shell: bash
         run: |
           f="${{ steps.map.outputs.target_file }}"
           date_str="$(date '+%Y-%m-%d %H:%M:%S')"
-          # Create the file if it doesn't exist
-          [ -f "$f" ] || echo "<!doctype html><body><h1>${{ steps.map.outputs.actor }}</h1></body>" > "$f"
+          [[ -f "$f" ]] || echo "<!doctype html><body><h1>${GITHUB_ACTOR}</h1></body>" > "$f"
           if grep -q '</body>' "$f"; then
-            sed -i "/<\/body>/i <p>Updated by ${{ steps.map.outputs.actor }} on ${date_str}</p>" "$f"
+            sed -i "/<\/body>/i <p>Updated by ${GITHUB_ACTOR} on ${date_str}</p>" "$f"
           else
-            echo "<p>Updated by ${{ steps.map.outputs.actor }} on ${date_str}</p>" >> "$f"
+            echo "<p>Updated by ${GITHUB_ACTOR} on ${date_str}</p>" >> "$f"
           fi
 
-      # Step 3: Append an entry to README.md logging the update
       - name: Log to README
+        if: steps.should_run.outputs.run == 'true'
+        shell: bash
         run: |
-          echo "### Updated by ${{ github.actor }} on $(date '+%Y-%m-%d %H:%M:%S') [Commit: $(git rev-parse --short HEAD)]" >> README.md
+          echo "### Updated by ${GITHUB_ACTOR} on $(date '+%Y-%m-%d %H:%M:%S') [Commit: $(git rev-parse --short HEAD)]" >> README.md
 
-      # Step 4: Commit & push changes back to main using GITHUB_TOKEN
-      - name: Commit and Push Changes
+      - name: Commit and push (if there are changes)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
-          git add .
-          git commit -m "Workflow: Updated HTML and README for ${{ github.actor }}" || echo "No changes to commit"
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
-          git push origin main
+          # If we decided to skip edits (bot actor), don't try to commit
+          if [[ "${{ steps.should_run.outputs.run }}" != "true" ]]; then
+            echo "Skipping commit on bot-triggered run."
+            exit 0
+          fi
+
+          # Only commit when something actually changed
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "Workflow: update by ${GITHUB_ACTOR}"
+            git push
+          else
+            echo "No changes to commit."
+          fi
