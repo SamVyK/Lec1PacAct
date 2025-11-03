@@ -1,0 +1,80 @@
+name: Lecture 2 Workflow
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  update-site:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 0: Check out the repo
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for git rev-parse
+
+      # Step 1: Set up git identity for commits (bot user)
+      - name: Configure git
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Step 2: Determine actor and optional per-actor HTML file
+      # Map usernames -> personal HTML file (edit to match your team)
+      - name: Resolve actor-to-file mapping
+        id: map
+        run: |
+          ACTOR="${{ github.actor }}"
+          # >>> EDIT THIS MAP FOR YOUR TEAM <<<
+          declare -A TEAM_MAPPING=(
+            [TeamLeader]="index.html"
+            [SamVyK]="member1.html"
+            [AliceDev]="member2.html"
+          )
+          TARGET_FILE="${TEAM_MAPPING[$ACTOR]}"
+          echo "actor=$ACTOR" >> $GITHUB_OUTPUT
+          echo "target_file=$TARGET_FILE" >> $GITHUB_OUTPUT
+
+      # Step 2a: Append a line to index.html for everyone (lecture requirement)
+      # (This will run for any actor)
+      - name: Update index.html with actor + timestamp
+        run: |
+          date_str="$(date '+%Y-%m-%d %H:%M:%S')"
+          # Insert just before </body> if present; otherwise append
+          if grep -q '</body>' index.html; then
+            sed -i "/<\/body>/i <p>Updated by ${{ steps.map.outputs.actor }} on ${date_str}</p>" index.html
+          else
+            echo "<p>Updated by ${{ steps.map.outputs.actor }} on ${date_str}</p>" >> index.html
+          fi
+
+      # Step 2b: Conditionally update the actor's personal HTML file
+      - name: Update actor-specific HTML (conditional)
+        if: ${{ steps.map.outputs.target_file != '' && steps.map.outputs.target_file != 'index.html' }}
+        run: |
+          f="${{ steps.map.outputs.target_file }}"
+          date_str="$(date '+%Y-%m-%d %H:%M:%S')"
+          # Create the file if it doesn't exist
+          [ -f "$f" ] || echo "<!doctype html><body><h1>${{ steps.map.outputs.actor }}</h1></body>" > "$f"
+          if grep -q '</body>' "$f"; then
+            sed -i "/<\/body>/i <p>Updated by ${{ steps.map.outputs.actor }} on ${date_str}</p>" "$f"
+          else
+            echo "<p>Updated by ${{ steps.map.outputs.actor }} on ${date_str}</p>" >> "$f"
+          fi
+
+      # Step 3: Append an entry to README.md logging the update
+      - name: Log to README
+        run: |
+          echo "### Updated by ${{ github.actor }} on $(date '+%Y-%m-%d %H:%M:%S') [Commit: $(git rev-parse --short HEAD)]" >> README.md
+
+      # Step 4: Commit & push changes back to main using GITHUB_TOKEN
+      - name: Commit and Push Changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git add .
+          git commit -m "Workflow: Updated HTML and README for ${{ github.actor }}" || echo "No changes to commit"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
+          git push origin main
