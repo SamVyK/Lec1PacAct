@@ -1,0 +1,14 @@
+name: "Vowel Frequency Analyzer"
+description: "Counts vowels in a text file and updates README with result, actor, and timestamp."
+
+inputs:
+  file:
+    description: "Path to the text file to analyze"
+    required: true
+    default: "data.txt"
+
+runs:
+  using: "docker"
+  image: "Dockerfile"
+  env:
+    FILE: ${{ inputs.file }}
