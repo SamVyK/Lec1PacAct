@@ -1,0 +1,37 @@
+name: CI - Vowel Frequency
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # allow commits from the workflow
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Option A (recommended by the slides): run the Docker Action we defined
+      - name: Run vowel frequency analyzer (Docker Action)
+        uses: ./.github/actions/vowel-frequency-analyzer
+        with:
+          file: data.txt
+
+      # Commit from within the workflow only if README changed but not committed by the action
+      - name: Commit pending changes (if any)
+        run: |
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "ci: finalize README update from workflow"
+          else
+            echo "No pending changes."
+          fi
+
+      - name: Push
+        run: git push
