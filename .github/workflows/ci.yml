@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # allow commits from the workflow
+  contents: write 
 
 jobs:
   build-and-run:
@@ -17,13 +17,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Option A (recommended by the slides): run the Docker Action we defined
       - name: Run vowel frequency analyzer (Docker Action)
         uses: ./.github/actions/vowel-frequency-analyzer
         with:
           file: data.txt
 
-      # Commit from within the workflow only if README changed but not committed by the action
       - name: Commit pending changes (if any)
         run: |
           if ! git diff --quiet; then
